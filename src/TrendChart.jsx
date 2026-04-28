@@ -1,9 +1,28 @@
 import React from 'react'
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend } from 'chart.js'
-import { Chart } from 'react-chartjs-2'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarController,
+  BarElement,
+  LineController,
+  LineElement,
+  PointElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend)
-
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarController,
+  BarElement,
+  LineController,
+  LineElement,
+  PointElement,
+  Tooltip,
+  Legend
+);
 export default function TrendChart({ data }) {
   if (!data || !data.length) return (
     <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>
