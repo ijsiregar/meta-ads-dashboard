@@ -48,7 +48,8 @@ export default function ConfigPanel({ onSave }) {
             padding: '2rem',
             width: 480,
             maxWidth: '90vw',
-            animation: 'fadeUp 0.2s ease',
+            animation: 'fadeUp 0.2s ease',maxHeight: '90vh',
+overflowY: 'auto',
           }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Konfigurasi API</h3>
 
