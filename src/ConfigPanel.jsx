@@ -38,7 +38,7 @@ export default function ConfigPanel({ onSave }) {
       {show && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          display: 'flex', alignItems: 'flex-start', paddingTop: '5vh', justifyContent: 'center',
           zIndex: 100,
         }} onClick={e => e.target === e.currentTarget && setShow(false)}>
           <div style={{
