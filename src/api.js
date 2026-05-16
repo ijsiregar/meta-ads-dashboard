@@ -234,3 +234,107 @@ export function fmtRoas(n) {
   if (!n || n === Infinity) return '—'
   return parseFloat(n).toFixed(2) + 'x'
 }
+
+// ─── fetchInsightsRange (custom since/until, used by MetaAdsTab) ─────────────
+export async function fetchInsightsRange(accounts, since, until) {
+  const BASE = 'https://graph.facebook.com/v19.0'
+  const FIELDS = 'spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions,action_values,cost_per_action_type'
+  const timeRange = JSON.stringify({ since, until })
+
+  async function fetchOne(token, adAccountId) {
+    const base = `${BASE}/${adAccountId}/insights`
+    const p = (extra = '') =>
+      `${base}?fields=${FIELDS}${extra}&time_range=${timeRange}&access_token=${token}`
+
+    const [sR, cR, asR, adR, dR] = await Promise.all([
+      fetch(p()),
+      fetch(p(',campaign_name,campaign_id') + '&level=campaign'),
+      fetch(p(',campaign_name,adset_name,adset_id') + '&level=adset'),
+      fetch(p(',campaign_name,adset_name,ad_name,ad_id') + '&level=ad'),
+      fetch(p() + '&time_increment=1'),
+    ])
+    const [summary, campaigns, adsets, ads, daily] = await Promise.all([
+      sR.json(), cR.json(), asR.json(), adR.json(), dR.json(),
+    ])
+    if (summary.error) throw new Error(`[${adAccountId}] ${summary.error.message}`)
+    return {
+      summary: summary.data?.[0] || null,
+      campaigns: campaigns.data || [],
+      adsets: adsets.data || [],
+      ads: ads.data || [],
+      daily: daily.data || [],
+      since, until,
+    }
+  }
+
+  function mergeActs(a, b) {
+    const map = {}
+    for (const arr of [a, b]) {
+      if (!arr) continue
+      for (const item of arr) {
+        map[item.action_type] = (map[item.action_type]||0) + (parseFloat(item.value)||0)
+      }
+    }
+    return Object.entries(map).map(([action_type, value]) => ({ action_type, value: String(value) }))
+  }
+
+  function mergeSummaries(summaries) {
+    const valid = summaries.filter(Boolean)
+    if (!valid.length) return null
+    return valid.reduce((acc, s) => {
+      if (!acc) return { ...s, actions: [...(s.actions||[])], action_values: [...(s.action_values||[])] }
+      const spend = parseFloat(acc.spend||0) + parseFloat(s.spend||0)
+      const impressions = parseFloat(acc.impressions||0) + parseFloat(s.impressions||0)
+      const reach = parseFloat(acc.reach||0) + parseFloat(s.reach||0)
+      const clicks = parseFloat(acc.clicks||0) + parseFloat(s.clicks||0)
+      return {
+        spend: String(spend), impressions: String(impressions), reach: String(reach), clicks: String(clicks),
+        frequency: reach > 0 ? String(impressions/reach) : '0',
+        cpc: clicks > 0 ? String(spend/clicks) : '0',
+        cpm: impressions > 0 ? String((spend/impressions)*1000) : '0',
+        ctr: impressions > 0 ? String((clicks/impressions)*100) : '0',
+        actions: mergeActs(acc.actions, s.actions),
+        action_values: mergeActs(acc.action_values, s.action_values),
+      }
+    }, null)
+  }
+
+  function mergeDailyData(allDaily) {
+    const map = {}
+    for (const daily of allDaily) {
+      for (const d of daily) {
+        const key = d.date_start
+        if (!map[key]) { map[key] = { ...d, actions: [...(d.actions||[])], action_values: [...(d.action_values||[])] }
+        } else {
+          const acc = map[key]
+          const spend = parseFloat(acc.spend||0) + parseFloat(d.spend||0)
+          const impressions = parseFloat(acc.impressions||0) + parseFloat(d.impressions||0)
+          const reach = parseFloat(acc.reach||0) + parseFloat(d.reach||0)
+          const clicks = parseFloat(acc.clicks||0) + parseFloat(d.clicks||0)
+          map[key] = { ...acc, date_start: key, spend: String(spend), impressions: String(impressions), reach: String(reach), clicks: String(clicks),
+            ctr: impressions > 0 ? String((clicks/impressions)*100) : '0',
+            cpc: clicks > 0 ? String(spend/clicks) : '0',
+            cpm: impressions > 0 ? String((spend/impressions)*1000) : '0',
+            actions: mergeActs(acc.actions, d.actions),
+            action_values: mergeActs(acc.action_values, d.action_values),
+          }
+        }
+      }
+    }
+    return Object.values(map).sort((a,b) => a.date_start.localeCompare(b.date_start))
+  }
+
+  const results = await Promise.allSettled(accounts.map(a => fetchOne(a.token, a.adact)))
+  const successful = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+  const errors = results.filter(r => r.status === 'rejected').map(r => r.reason?.message||'Error')
+  if (!successful.length) throw new Error(errors.join('; '))
+
+  return {
+    summary: mergeSummaries(successful.map(r => r.summary)),
+    campaigns: successful.flatMap(r => r.campaigns),
+    adsets: successful.flatMap(r => r.adsets),
+    ads: successful.flatMap(r => r.ads),
+    daily: mergeDailyData(successful.map(r => r.daily)),
+    since, until, errors,
+  }
+}
