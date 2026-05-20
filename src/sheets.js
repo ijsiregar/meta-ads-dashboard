@@ -1,45 +1,26 @@
 // ─── Google Sheets API (public read-only via API key) ────────────────────────
-const SPREADSHEET_ID = '1xbPLtdk4COKLlaHr3RXVlqTdjD11lOnG-Gmn01bBHnM'
-const BASE = 'https://sheets.googleapis.com/v4/spreadsheets'
 
-const PRODUCTS = ['Jasa Video Iklan', 'Jasa Creative lain', 'Ebook Saham', 'Prodig Lain']
+const BASE = 'https://sheets.googleapis.com/v4/spreadsheets'
 
 // ─── Tab name helpers ────────────────────────────────────────────────────────
 const MONTHS_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 
 function getTabName(year, month) {
-  // month: 0-indexed
   return `Rekap_${MONTHS_ID[month]}_${year}`
-}
-
-export function getCurrentTabName() {
-  const wib = new Date(Date.now() + 7 * 3600000)
-  return getTabName(wib.getUTCFullYear(), wib.getUTCMonth())
-}
-
-export function getLastMonthTabName() {
-  const wib = new Date(Date.now() + 7 * 3600000)
-  let m = wib.getUTCMonth() - 1
-  let y = wib.getUTCFullYear()
-  if (m < 0) { m = 11; y-- }
-  return getTabName(y, m)
 }
 
 // ─── WIB date helpers ────────────────────────────────────────────────────────
 export function wibToday() {
-  const wib = new Date(Date.now() + 7 * 3600000)
-  return wib.toISOString().split('T')[0] // YYYY-MM-DD
+  return new Date(Date.now() + 7 * 3600000).toISOString().split('T')[0]
 }
 
 export function wibYesterday() {
-  const wib = new Date(Date.now() + 7 * 3600000 - 86400000)
-  return wib.toISOString().split('T')[0]
+  return new Date(Date.now() + 7 * 3600000 - 86400000).toISOString().split('T')[0]
 }
 
 export function wibDateRange(days) {
   const end = wibToday()
-  const startMs = Date.now() + 7 * 3600000 - (days - 1) * 86400000
-  const start = new Date(startMs).toISOString().split('T')[0]
+  const start = new Date(Date.now() + 7 * 3600000 - (days - 1) * 86400000).toISOString().split('T')[0]
   return { start, end }
 }
 
@@ -52,7 +33,7 @@ export function wibThisMonth() {
 
 export function wibLastMonth() {
   const wib = new Date(Date.now() + 7 * 3600000)
-  let m = wib.getUTCMonth() // 0-indexed, so this is last month's 1-indexed value
+  let m = wib.getUTCMonth()
   let y = wib.getUTCFullYear()
   if (m === 0) { m = 12; y-- }
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
@@ -62,93 +43,118 @@ export function wibLastMonth() {
 
 // ─── Parse sheet date strings to YYYY-MM-DD ──────────────────────────────────
 function parseSheetDate(raw) {
-  if (!raw) return null
-  // formats: "1-May-2026", "01/05/2026", "2026-05-01"
-  const months = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12,
-    Mei:5,Agt:8,Okt:10,Nov:11,Des:12,Agu:8,Maret:3,April:4,Juni:6,Juli:7,Agustus:8,September:9,Oktober:10,Januari:1,Februari:2 }
-
-  // "1-May-2026" or "01-May-2026"
-  const m1 = raw.match(/^(\d{1,2})-([A-Za-z]+)-(\d{4})$/)
+  if (!raw || !raw.trim()) return null
+  const s = raw.trim()
+  const months = {
+    Jan:1, Feb:2, Mar:3, Apr:4, May:5, Jun:6, Jul:7, Aug:8, Sep:9, Oct:10, Nov:11, Dec:12,
+    Januari:1, Februari:2, Maret:3, April:4, Mei:5, Juni:6, Juli:7,
+    Agustus:8, September:9, Oktober:10, November:11, Desember:12,
+    Agt:8, Agu:8, Okt:10, Des:12,
+  }
+  // "1-May-2026" or "1-Mei-2026"
+  const m1 = s.match(/^(\d{1,2})-([A-Za-z]+)-(\d{4})$/)
   if (m1) {
-    const mo = months[m1[2]] || months[m1[2].substring(0,3)]
-    if (mo) {
-      const mm = String(mo).padStart(2,'0')
-      const dd = String(parseInt(m1[1])).padStart(2,'0')
-      return `${m1[3]}-${mm}-${dd}`
-    }
+    const mo = months[m1[2]] || months[m1[2].charAt(0).toUpperCase() + m1[2].slice(1).toLowerCase()]
+    if (mo) return `${m1[3]}-${String(mo).padStart(2,'0')}-${String(parseInt(m1[1])).padStart(2,'0')}`
   }
   // "01/05/2026" DD/MM/YYYY
-  const m2 = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (m2) return `${m2[3]}-${String(m2[2]).padStart(2,'0')}-${String(m2[1]).padStart(2,'0')}`
-
-  // ISO already
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
-
+  // ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
   return null
 }
 
-// ─── Fetch sheet data ────────────────────────────────────────────────────────
-async function fetchSheetData(apiKey, tabName) {
-  const range = encodeURIComponent(`${tabName}!A1:K500`)
-  const url = `${BASE}/${SPREADSHEET_ID}/values/${range}?key=${apiKey}`
+// ─── Parse number from sheet cell (handle comma separators) ──────────────────
+function parseNum(raw) {
+  if (!raw && raw !== 0) return 0
+  return parseFloat(raw.toString().replace(/,/g, '')) || 0
+}
+
+function parseInt2(raw) {
+  if (!raw && raw !== 0) return 0
+  return parseInt(raw.toString().replace(/,/g, '')) || 0
+}
+
+// ─── Fetch raw sheet values ───────────────────────────────────────────────────
+async function fetchSheetData(apiKey, tabName, spreadsheetId) {
+  const range = encodeURIComponent(`${tabName}!A1:K2000`)
+  const url = `${BASE}/${spreadsheetId}/values/${range}?key=${apiKey}`
   const res = await fetch(url)
   const json = await res.json()
   if (json.error) throw new Error(json.error.message)
   return json.values || []
 }
 
-// ─── Parse rows into structured records ──────────────────────────────────────
+// ─── Parse rows — dynamic products, skip empty rows ──────────────────────────
 function parseRows(values) {
   if (!values.length) return []
-  // skip header row (row 0)
-  const rows = values.slice(1)
-  return rows.map(r => {
-    const dateRaw = r[0] || ''
-    const date = parseSheetDate(dateRaw)
-    if (!date) return null
-    return {
-      date,
-      produk:      r[1]  || '',
-      omzet:       parseFloat((r[2]  || '0').toString().replace(/,/g,'')) || 0,
-      spent:       parseFloat((r[3]  || '0').toString().replace(/,/g,'')) || 0,
-      lead:        parseInt((r[4]   || '0').toString().replace(/,/g,''))  || 0,
-      closing:     parseInt((r[5]   || '0').toString().replace(/,/g,''))  || 0,
-      closingRate: r[6]  || '',
-      cpl:         parseFloat((r[7]  || '0').toString().replace(/,/g,'')) || 0,
-      cpp:         parseFloat((r[8]  || '0').toString().replace(/,/g,'')) || 0,
-      biayaLain:   parseFloat((r[9]  || '0').toString().replace(/,/g,'')) || 0,
-      net:         parseFloat((r[10] || '0').toString().replace(/,/g,'')) || 0,
-    }
-  }).filter(Boolean)
-}
-
-// ─── Filter rows by date range ────────────────────────────────────────────────
-function filterByRange(rows, start, end) {
-  return rows.filter(r => r.date >= start && r.date <= end)
-}
-
-// ─── Aggregate rows ───────────────────────────────────────────────────────────
-function aggregateRows(rows, includeBiayaLain = false) {
-  const byProduct = {}
-  PRODUCTS.forEach(p => {
-    byProduct[p] = { omzet:0, spent:0, lead:0, closing:0, net:0, biayaLain:0, rows:[] }
-  })
+  const rows = values.slice(1) // skip header
+  const result = []
 
   for (const r of rows) {
-    const p = byProduct[r.produk]
-    if (!p) continue
-    p.omzet     += r.omzet
-    p.spent     += r.spent
-    p.lead      += r.lead
-    p.closing   += r.closing
-    p.net       += r.net
-    p.biayaLain += r.biayaLain
-    p.rows.push(r)
+    const dateRaw = r[0] || ''
+    const produk  = (r[1] || '').trim()
+
+    // skip row jika tanggal atau produk kosong
+    if (!dateRaw.trim() || !produk) continue
+
+    const date = parseSheetDate(dateRaw)
+    if (!date) continue
+
+    // skip baris yang semua angkanya 0 (baris placeholder kosong)
+    const omzet     = parseNum(r[2])
+    const spent     = parseNum(r[3])
+    const lead      = parseInt2(r[4])
+    const closing   = parseInt2(r[5])
+    const biayaLain = parseNum(r[9])
+    const net       = parseNum(r[10])
+
+    if (omzet === 0 && spent === 0 && lead === 0 && closing === 0 && net === 0) continue
+
+    result.push({
+      date, produk, omzet, spent, lead, closing,
+      biayaLain, net,
+      cpl: parseNum(r[7]),
+      cpp: parseNum(r[8]),
+    })
   }
 
-  // totals
+  return result
+}
+
+// ─── Aggregate — produk dibaca dinamis dari data ──────────────────────────────
+function aggregateRows(rows, includeBiayaLain = false) {
+  // kumpulkan produk unik, urut sesuai kemunculan pertama
+  const productOrder = []
+  const seen = new Set()
+  for (const r of rows) {
+    if (r.produk && !seen.has(r.produk)) {
+      productOrder.push(r.produk)
+      seen.add(r.produk)
+    }
+  }
+
+  // init per produk
+  const byProduct = {}
+  for (const p of productOrder) {
+    byProduct[p] = { omzet:0, spent:0, lead:0, closing:0, net:0, biayaLain:0 }
+  }
+
+  // akumulasi
+  for (const r of rows) {
+    if (!byProduct[r.produk]) continue
+    byProduct[r.produk].omzet     += r.omzet
+    byProduct[r.produk].spent     += r.spent
+    byProduct[r.produk].lead      += r.lead
+    byProduct[r.produk].closing   += r.closing
+    byProduct[r.produk].net       += r.net
+    byProduct[r.produk].biayaLain += r.biayaLain
+  }
+
+  // total
   const total = { omzet:0, spent:0, lead:0, closing:0, net:0, biayaLain:0 }
-  for (const p of PRODUCTS) {
+  for (const p of productOrder) {
     total.omzet     += byProduct[p].omzet
     total.spent     += byProduct[p].spent
     total.lead      += byProduct[p].lead
@@ -157,82 +163,77 @@ function aggregateRows(rows, includeBiayaLain = false) {
     total.biayaLain += byProduct[p].biayaLain
   }
 
-  // if includeBiayaLain, subtract from net
+  // biaya lain sebagai pengurang
   if (includeBiayaLain) {
     total.netAfterBiaya = total.net - total.biayaLain
-    for (const p of PRODUCTS) {
+    for (const p of productOrder) {
       byProduct[p].netAfterBiaya = byProduct[p].net - byProduct[p].biayaLain
     }
   }
 
-  // derived
+  // derived metrics
   const derive = obj => ({
     ...obj,
-    roi:          obj.spent > 0 ? ((obj.omzet / obj.spent) * 100).toFixed(1) : null,
-    closingRate:  obj.lead  > 0 ? ((obj.closing / obj.lead) * 100).toFixed(1) : null,
-    cpl:          obj.lead  > 0 ? obj.spent / obj.lead : null,
-    cpp:          obj.closing > 0 ? obj.spent / obj.closing : null,
+    roi:         obj.spent > 0 ? ((obj.omzet / obj.spent) * 100).toFixed(1) : null,
+    closingRate: obj.lead  > 0 ? ((obj.closing / obj.lead) * 100).toFixed(1) : null,
+    cpl:         obj.lead  > 0 ? obj.spent / obj.lead : null,
+    cpp:         obj.closing > 0 ? obj.spent / obj.closing : null,
   })
 
   return {
-    byProduct: Object.fromEntries(PRODUCTS.map(p => [p, derive(byProduct[p])])),
+    products: productOrder,                                          // ← dinamis
+    byProduct: Object.fromEntries(productOrder.map(p => [p, derive(byProduct[p])])),
     total: derive(total),
     includeBiayaLain,
   }
 }
 
-// ─── Daily series for chart ───────────────────────────────────────────────────
+// ─── Daily series ─────────────────────────────────────────────────────────────
 export function buildDailySeries(rows) {
   const map = {}
   for (const r of rows) {
-    if (!map[r.date]) map[r.date] = { date: r.date, omzet: 0, spent: 0, net: 0, lead: 0, closing: 0 }
+    if (!map[r.date]) map[r.date] = { date:r.date, omzet:0, spent:0, net:0, lead:0, closing:0, byProduct:{} }
     map[r.date].omzet   += r.omzet
     map[r.date].spent   += r.spent
     map[r.date].net     += r.net
     map[r.date].lead    += r.lead
     map[r.date].closing += r.closing
+    if (!map[r.date].byProduct[r.produk]) {
+      map[r.date].byProduct[r.produk] = { omzet:0, spent:0, net:0, lead:0, closing:0 }
+    }
+    map[r.date].byProduct[r.produk].omzet   += r.omzet
+    map[r.date].byProduct[r.produk].spent   += r.spent
+    map[r.date].byProduct[r.produk].net     += r.net
+    map[r.date].byProduct[r.produk].lead    += r.lead
+    map[r.date].byProduct[r.produk].closing += r.closing
   }
   return Object.values(map).sort((a,b) => a.date.localeCompare(b.date))
 }
 
-// ─── Main fetch ───────────────────────────────────────────────────────────────
-export async function fetchSalesData(apiKey, mode, customDate = null) {
+// ─── Determine which tabs to load based on date range ────────────────────────
+function getTabsForRange(start, end) {
   const wib = new Date(Date.now() + 7 * 3600000)
   const curYear  = wib.getUTCFullYear()
   const curMonth = wib.getUTCMonth()
 
-  // determine which tabs to load
-  const thisTab = getTabName(curYear, curMonth)
-  const lastTab = (() => {
-    let m = curMonth - 1, y = curYear
-    if (m < 0) { m = 11; y-- }
-    return getTabName(y, m)
-  })()
+  const startDate = new Date(start + 'T00:00:00Z')
+  const endDate   = new Date(end   + 'T00:00:00Z')
 
-  let tabsToLoad = [thisTab]
-  if (mode === 'last_month') tabsToLoad = [lastTab]
-  if (mode === '7day') {
-    // might span two months
-    const { start } = wibDateRange(7)
-    const startMonth = new Date(start + 'T00:00:00Z').getUTCMonth()
-    if (startMonth !== curMonth) tabsToLoad = [lastTab, thisTab]
+  const tabs = new Set()
+  // iterate month by month from start to end
+  let y = startDate.getUTCFullYear()
+  let m = startDate.getUTCMonth()
+  while (y < endDate.getUTCFullYear() || (y === endDate.getUTCFullYear() && m <= endDate.getUTCMonth())) {
+    tabs.add(getTabName(y, m))
+    m++
+    if (m > 11) { m = 0; y++ }
   }
+  return [...tabs]
+}
 
-  // load tab(s)
-  const allRows = []
-  const errors = []
-  for (const tab of tabsToLoad) {
-    try {
-      const values = await fetchSheetData(apiKey, tab)
-      allRows.push(...parseRows(values))
-    } catch(e) {
-      errors.push(`Tab "${tab}": ${e.message}`)
-    }
-  }
-
-  if (!allRows.length && errors.length) throw new Error(errors.join('; '))
-
-  // date filter
+// ─── Main fetch ───────────────────────────────────────────────────────────────
+export async function fetchSalesData(apiKey, mode, customDate = null, spreadsheetId = null) {
+  // 1. determine date range
   let start, end, includeBiayaLain = false
 
   switch (mode) {
@@ -255,11 +256,32 @@ export async function fetchSalesData(apiKey, mode, customDate = null) {
       start = end = wibToday()
   }
 
-  const filtered = filterByRange(allRows, start, end)
-  const agg = aggregateRows(filtered, includeBiayaLain)
+  // 2. determine tabs to load (otomatis handle lintas bulan)
+  const tabsToLoad = getTabsForRange(start, end)
+
+  // 3. fetch semua tab secara paralel
+  const allRows = []
+  const errors  = []
+  await Promise.all(tabsToLoad.map(async tab => {
+    try {
+      const values = await fetchSheetData(apiKey, tab, spreadsheetId)
+      allRows.push(...parseRows(values))
+    } catch(e) {
+      // tab belum ada = wajar, bukan error fatal
+      if (!e.message.includes('Unable to parse range') && !e.message.includes('not found')) {
+        errors.push(`Tab "${tab}": ${e.message}`)
+      }
+    }
+  }))
+
+  if (!allRows.length && errors.length) throw new Error(errors.join('; '))
+
+  // 4. filter by date range
+  const filtered = allRows.filter(r => r.date >= start && r.date <= end)
+
+  // 5. aggregate (produk dinamis)
+  const agg   = aggregateRows(filtered, includeBiayaLain)
   const daily = buildDailySeries(filtered)
 
   return { ...agg, daily, start, end, mode, errors, totalRows: filtered.length }
 }
-
-export { PRODUCTS }
